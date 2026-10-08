@@ -30,7 +30,7 @@ router = APIRouter()
 
 XHTTP_BUF = 512 * 1024
 DOWNLINK_QUEUE_MAX = 32
-SESSION_IDLE_TIMEOUT = 30
+SESSION_IDLE_TIMEOUT = 120
 REAPER_INTERVAL = 10
 TCP_CONNECT_TIMEOUT = 10.0
 SOCK_BUF_SIZE = 2 * 1024 * 1024
@@ -45,7 +45,9 @@ QUOTA_MAX_BATCH = 1 * 1024 * 1024
 QUOTA_START_BATCH = 64 * 1024
 QUOTA_CHECK_INTERVAL = 0.2 
 
-PACKET_UP_HIGH_WATER = 2 * 1024 * 1024  
+PACKET_UP_HIGH_WATER = 2 * 1024 * 1024
+PACKET_UP_MAX_PACKETS = 128
+PACKET_UP_MAX_BYTES = 8 * 1024 * 1024  
 
 xhttp_sessions: dict = {}
 XHTTP_LOCK = asyncio.Lock()
@@ -221,6 +223,20 @@ async def _get_or_create_session(uuid: str, mode: str, session_id: str, ip: str 
             logger.warning(f"🚫 XHTTP[{mode}] rejected uuid={uuid[:8]} ip={ip} (ip limit reached)")
             raise HTTPException(status_code=403, detail="ip limit reached")
 
+        # Keep XHTTP within the same conservative process-wide/per-link
+        # connection ceilings as the other relay transports.
+        total_connections = len(connections)
+        link_connections = sum(
+            1 for conn in connections.values()
+            if conn.get("uuid") == uuid
+        )
+        if total_connections >= 128 or link_connections >= 64:
+            logger.warning(
+                f"🚫 XHTTP[{mode}] rejected uuid={uuid[:8]} "
+                f"(connection limit total={total_connections} link={link_connections})"
+            )
+            raise HTTPException(status_code=429, detail="connection limit reached")
+
         conn_id = secrets.token_urlsafe(6)
         connections[conn_id] = {
             "uuid": uuid,
@@ -281,8 +297,15 @@ async def _reaper():
         await asyncio.sleep(REAPER_INTERVAL)
         now = time.time()
         async with XHTTP_LOCK:
-            stale = [sid for sid, s in xhttp_sessions.items()
-                     if now - s["last_seen"] > SESSION_IDLE_TIMEOUT and not s.get("tcp_open")]
+            stale = [
+                sid for sid, s in xhttp_sessions.items()
+                if now - s["last_seen"] > SESSION_IDLE_TIMEOUT
+                and (
+                    not s.get("tcp_open")
+                    or (s.get("downlink_task") is not None and s["downlink_task"].done())
+                    or (s.get("uplink_task") is not None and s["uplink_task"].done())
+                )
+            ]
         for sid in stale:
             await _teardown(sid)
 
@@ -621,33 +644,25 @@ async def _stream_one_uplink_iter(session_id: str, uuid: str, sess: dict, iterat
 
 
 def _stream_one_response(request: Request):
-    """Build the Stream-One response as one full-duplex HTTP tunnel.
-
-    Xray sends the HTTP response headers before it waits for the request body.
-    This ordering is important because the client may wait for the response
-    before continuing to upload the VLESS stream.
-    """
+    """Build the Stream-One response without waiting for the full VLESS header."""
     async def gen():
-        session_id = None
+        iterator = request.stream().__aiter__()
         try:
-            # Flush the VLESS response header immediately. Do not wait for the
-            # request body before producing the HTTP response.
-            yield VLESS_RESPONSE_HEADER
-
-            iterator = request.stream().__aiter__()
             iterator, first_chunk = await _stream_one_read_first(iterator)
             uuid = _stream_one_extract_uuid(first_chunk)
             await _check_link(uuid)
             session_id = "one-" + secrets.token_urlsafe(18)
-            sess = await _get_or_create_session(
-                uuid, "stream-one", session_id, _req_client_ip(request)
-            )
+            sess = await _get_or_create_session(uuid, "stream-one", session_id, _req_client_ip(request))
             if sess.get("closed"):
                 return
 
             sess["uplink_task"] = asyncio.create_task(
                 _stream_one_uplink_iter(session_id, uuid, sess, iterator, first_chunk)
             )
+
+            # Flush the VLESS response header immediately. The destination
+            # connection is opened by the uplink task concurrently.
+            yield VLESS_RESPONSE_HEADER
 
             while True:
                 chunk = await sess["down_q"].get()
@@ -661,8 +676,9 @@ def _stream_one_response(request: Request):
             error_logs.append({"error": str(exc), "time": datetime.now().isoformat()})
             return
         finally:
-            if session_id:
-                await _teardown(session_id)
+            sid = locals().get("session_id")
+            if sid:
+                await _teardown(sid)
 
     fp = request.query_params.get("fp", DEFAULT_FINGERPRINT)
     headers = _resp_headers(fp, stream_one=True)
