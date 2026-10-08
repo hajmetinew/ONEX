@@ -164,7 +164,6 @@ PROTOCOL_ICON_FILES = {
     "xhttp-packet-up": PROTOCOL_ICON_DIR / "onex-xhttp.png",
     "xhttp-stream-up": PROTOCOL_ICON_DIR / "onex-gamig.png",
     "xhttp-stream-one": PROTOCOL_ICON_DIR / "onex-stream.png",
-    # VPS/native protocols each have their own ONEX-style neon artwork.
     "trojan": PROTOCOL_ICON_DIR / "trojan.png",
     "shadowsocks": PROTOCOL_ICON_DIR / "shadowsocks.png",
     "socks5": PROTOCOL_ICON_DIR / "socks5.png",
@@ -355,9 +354,20 @@ def is_ad_block_enabled_for_link(link: dict | None) -> bool:
 
 
 def is_destination_blocked(address: str, link: dict | None = None) -> bool:
+    # Always reject obvious local/private destinations at the relay edge.
+    # This does not alter public Internet destinations used by VIP configs.
+    host = normalize_block_domain(address)
+    if host in {"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"}:
+        return True
+    try:
+        import ipaddress
+        ip = ipaddress.ip_address(host)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            return True
+    except ValueError:
+        pass
     if not is_ad_block_enabled_for_link(link):
         return False
-    host = normalize_block_domain(address)
     return any(host == d or host.endswith("." + d) for d in AD_BLOCKER.get("domains", []))
 
 stats = {
@@ -499,21 +509,6 @@ PROTOCOL_LABELS = {
     "trojan-ws": "SideRail Trojan WS",
     "vless-httpupgrade": "SideRail VLESS HTTPUpgrade",
     "siderail-vless-xhttp": "SideRail VLESS XHTTP",
-    # VPS-native protocols
-    "trojan": "Trojan",
-    "shadowsocks": "Shadowsocks",
-    "socks5": "SOCKS5",
-    "http": "HTTP Proxy",
-    "hysteria2": "Hysteria2",
-    "vless-reality": "VLESS Reality",
-    "vless-grpc-reality": "VLESS gRPC Reality",
-    "vmess": "VMess",
-    "tuic": "TUIC",
-    "anytls": "AnyTLS",
-    "naive": "NaiveProxy",
-    "shadowtls": "ShadowTLS",
-    "snell": "Snell",
-    "hysteria": "Hysteria",
 }
 
 PROTOCOL_ALIASES = {
@@ -7140,17 +7135,12 @@ async def get_connections(
 # NATIVE PROTOCOL CORE (sing-box)
 # ============================================================
 
-try:
-    from onex.core.native_core import NativeCore, _protocol_safe_advanced
-    NATIVE_CORE = NativeCore(DATA_DIR)
-     # Native protocols are advertised individually; the all-protocol subscription remains Railway-only.
-    for _native_protocol in getattr(NATIVE_CORE, "SUPPORTED", ()):
-        if _native_protocol not in PROTOCOLS:
-            PROTOCOLS.append(_native_protocol)
-    logger.info("Native sing-box backend loaded: %s", ", ".join(getattr(NATIVE_CORE, "SUPPORTED", ())))
-except Exception as exc:
-    NATIVE_CORE = None
-    logger.warning("Native protocol backend unavailable: %s", exc)
+# ONEX VPS/native protocol backend has been removed from the product surface.
+# Keep the symbol as None because several legacy-safe code paths reference it;
+# ONEX VIP relay protocols remain fully independent of the native backend.
+NATIVE_CORE = None
+_protocol_safe_advanced = lambda advanced, protocol, all_protocols=False: advanced
+logger.info("Native VPS backend disabled; ONEX VIP relay backend remains active")
 
 
 try:
@@ -7479,20 +7469,6 @@ _PROTOCOL_ORDER = [
     "trojan-ws",
     "vless-httpupgrade",
     "siderail-vless-xhttp",
-    "trojan",
-    "shadowsocks",
-    "socks5",
-    "http",
-    "hysteria2",
-    "vless-reality",
-    "vless-grpc-reality",
-    "vmess",
-    "tuic",
-    "anytls",
-    "naive",
-    "shadowtls",
-    "snell",
-    "hysteria",
 ]
 PROTOCOLS[:] = [p for p in _PROTOCOL_ORDER if p in PROTOCOLS]
 
@@ -9877,7 +9853,8 @@ html.light .top-setting-group,html.light .top-notify-btn{background:#fff!importa
 .protocol-picker-scroll{overflow:auto;padding:14px 16px 16px}.protocol-section{margin-bottom:17px}.protocol-section-title{display:flex;align-items:center;gap:9px;margin:0 2px 9px;color:var(--accent2);font-size:11px;font-weight:900}.protocol-section-title:before{content:"";height:1px;flex:1;background:linear-gradient(90deg,rgba(var(--accent-rgb),.05),rgba(var(--accent-rgb),.38));order:2}.protocol-section-title span{order:1}.protocol-section-title b{font-size:13px;order:3;font-weight:500}
 .protocol-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.protocol-option{position:relative;min-height:108px;border-radius:16px;border:1px solid rgba(var(--accent2-rgb),.16);background:linear-gradient(145deg,color-mix(in srgb, rgb(32 32 32 / .74) 88%, var(--accent)),color-mix(in srgb, rgb(15 15 15 / .82) 92%, var(--accent)));padding:7px 10px 10px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;overflow:hidden;box-shadow:inset 0 1px rgba(255,255,255,.045)}.protocol-option:hover{border-color:rgba(var(--accent2-rgb),.42)}.protocol-option.selected{border-color:var(--accent);box-shadow:0 0 0 1px rgba(var(--accent-rgb),.18),0 0 22px rgba(var(--accent-rgb),.20);background:linear-gradient(145deg,rgba(var(--accent-rgb),.88),color-mix(in srgb, rgb(24 24 24 / .86) 88%, var(--accent)))}.protocol-option.selected:after{content:"✓";position:absolute;top:7px;right:7px;width:21px;height:21px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,var(--accent),var(--purple));color:#fff;font-size:12px;font-weight:900}.protocol-option-radio{position:absolute;top:10px;left:10px;width:16px;height:16px;border-radius:50%;border:2px solid rgba(var(--accent2-rgb),.65);background:transparent}.protocol-option.selected .protocol-option-radio{border-color:#22d3ee}
 .protocol-option-icon.proto-3d{width:76px;height:76px;display:grid;place-items:center;position:relative;z-index:1;flex:0 0 auto}.proto-3d .static-icon{width:74px;height:74px;display:block;object-fit:contain;filter:drop-shadow(0 7px 10px rgba(0,0,0,.30))}.protocol-option-name{font-size:11px;font-weight:900;position:relative;z-index:1;color:#f8fafc}.protocol-option-desc{font-size:8.5px;color:var(--t3);margin-top:2px;position:relative;z-index:1}
-.protocol-picker-section{margin:0 0 14px;padding:10px;border:1px solid rgba(var(--accent-rgb),.14);border-radius:16px;background:color-mix(in srgb, rgb(12 12 12 / .35) 92%, var(--accent))}.protocol-picker-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 9px;padding:3px 4px;direction:rtl}.protocol-picker-section-head div{display:flex;flex-direction:column;gap:2px}.protocol-picker-section-head b{font-size:12px;color:#f8fbff}.protocol-picker-section-head small{font-size:8px;color:var(--accent2)}.protocol-picker-section-head>span{min-width:24px;height:24px;border-radius:9px;display:grid;place-items:center;background:rgba(var(--purple-rgb),.14);border:1px solid rgba(var(--purple-rgb),.22);color:var(--purple);font-size:9px;font-weight:900}.protocol-picker-section.vps .protocol-picker-section-head>span{background:rgba(var(--accent-rgb),.12);border-color:rgba(var(--accent-rgb),.2);color:var(--accent2)}.protocol-picker-section .protocol-grid{margin:0}.protocol-picker-section.vps .protocol-option{min-height:118px}.protocol-picker-section.railway .protocol-option{min-height:122px}.protocol-picker-section.railway{border-color:rgba(var(--accent-rgb),.18)}.protocol-picker-section.railway .protocol-picker-section-head>span{color:var(--accent2);background:rgba(var(--accent-rgb),.12);border-color:rgba(var(--accent-rgb),.2)}.protocol-picker-foot{padding:11px 16px 15px;border-top:1px solid color-mix(in srgb, rgb(161 161 161 / .12) 82%, var(--accent));background:linear-gradient(180deg,color-mix(in srgb, rgb(12 12 12 / .72) 92%, var(--accent)),color-mix(in srgb, rgb(11 11 11 / .98) 92%, var(--accent)));display:flex;align-items:center;gap:10px;direction:rtl;flex:0 0 auto}.protocol-selected-info{flex:1;min-width:0;height:38px;border-radius:12px;border:1px solid rgba(var(--accent2-rgb),.16);background:color-mix(in srgb, rgb(32 32 32 / .55) 88%, var(--accent));display:flex;align-items:center;justify-content:center;color:var(--accent2);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 10px}.protocol-picker-confirm{flex:0 0 auto;height:42px;padding:0 18px;border:0;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--purple));color:#fff;font-family:inherit;font-size:11px;font-weight:900;cursor:pointer;box-shadow:0 8px 20px rgba(var(--accent-rgb),.22)}
+.protocol-picker-section{margin:0 0 14px;padding:10px;border:1px solid rgba(var(--accent-rgb),.14);border-radius:16px;background:color-mix(in srgb, rgb(12 12 12 / .35) 92%, var(--accent))}.protocol-picker-section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 9px;padding:3px 4px;direction:rtl}.protocol-picker-section-head div{display:flex;flex-direction:column;gap:2px}.protocol-picker-section-head b{font-size:12px;color:#f8fbff}.protocol-picker-section-head small{font-size:8px;color:var(--accent2)}.protocol-picker-section-head>span{min-width:24px;height:24px;border-radius:9px;display:grid;place-items:center;background:rgba(var(--purple-rgb),.14);border:1px solid rgba(var(--purple-rgb),.22);color:var(--purple);font-size:9px;font-weight:900}.protocol-picker-section.vps .protocol-picker-section-head>span{background:rgba(var(--accent-rgb),.12);border-color:rgba(var(--accent-rgb),.2);color:var(--accent2)}.protocol-picker-section .protocol-grid{margin:0}.protocol-picker-section.vps .protocol-option{min-height:118px}
+.all-proto-toggle{display:none!important}.protocol-picker-section.railway .protocol-option{min-height:122px}.protocol-picker-section.railway{border-color:rgba(var(--accent-rgb),.18)}.protocol-picker-section.railway .protocol-picker-section-head>span{color:var(--accent2);background:rgba(var(--accent-rgb),.12);border-color:rgba(var(--accent-rgb),.2)}.protocol-picker-foot{padding:11px 16px 15px;border-top:1px solid color-mix(in srgb, rgb(161 161 161 / .12) 82%, var(--accent));background:linear-gradient(180deg,color-mix(in srgb, rgb(12 12 12 / .72) 92%, var(--accent)),color-mix(in srgb, rgb(11 11 11 / .98) 92%, var(--accent)));display:flex;align-items:center;gap:10px;direction:rtl;flex:0 0 auto}.protocol-selected-info{flex:1;min-width:0;height:38px;border-radius:12px;border:1px solid rgba(var(--accent2-rgb),.16);background:color-mix(in srgb, rgb(32 32 32 / .55) 88%, var(--accent));display:flex;align-items:center;justify-content:center;color:var(--accent2);font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 10px}.protocol-picker-confirm{flex:0 0 auto;height:42px;padding:0 18px;border:0;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--purple));color:#fff;font-family:inherit;font-size:11px;font-weight:900;cursor:pointer;box-shadow:0 8px 20px rgba(var(--accent-rgb),.22)}
 html.light .protocol-picker-bg{background:color-mix(in srgb, rgb(23 23 23 / .28) 92%, var(--accent))}html.light .protocol-picker{background:linear-gradient(145deg,#fff,#f7fbff);color:color-mix(in srgb, rgb(23 23 23) 92%, var(--accent))}html.light .protocol-option{background:linear-gradient(145deg,#fff,#f7faff)}html.light .protocol-option-name{color:color-mix(in srgb, rgb(23 23 23) 92%, var(--accent))}html.light .protocol-option-desc{color:color-mix(in srgb, rgb(114 114 114) 82%, var(--accent))}html.light .protocol-selected-info{background:#eff6ff;border-color:var(--accent2);color:var(--accent)}
 @media(max-width:560px){.protocol-picker-bg{padding:8px}.protocol-picker{width:calc(100vw - 16px);max-height:90vh;border-radius:20px}.protocol-picker-head{padding:13px 14px 12px}.protocol-picker-title{font-size:15px}.protocol-picker-scroll{padding:11px}.protocol-grid{gap:7px}.protocol-option{min-height:104px;padding:7px}.protocol-option-icon.proto-3d{width:64px;height:64px}.proto-3d .static-icon{width:62px;height:62px}.protocol-option-name{font-size:10px}.protocol-option-desc{font-size:7.5px}.protocol-picker-foot{padding:9px 11px 11px;gap:7px}.protocol-selected-info{height:34px;font-size:8px}.protocol-picker-confirm{height:40px;padding:0 12px;font-size:10px}}
 @media(max-width:360px){.protocol-grid{grid-template-columns:1fr}.protocol-option{min-height:90px}}
@@ -13567,7 +13544,7 @@ async function openConfigEditor(e,uid){
 function collectConfigFormBody(){
   const advanced=advancedFormObject(),ports=advanced.ports.length?advanced.ports:[Number(configEditValue('cPort'))||443];
   const bundle=[...document.querySelectorAll('#protocolBundleOptions input:checked')].map(x=>x.value);
-  return {label:configEditValue('cName').trim()||undefined,protocol:configEditValue('cProto')||undefined,bundle_protocols:bundle,ad_block_enabled:!!document.getElementById('cAdBlockEnabled')?.checked,category_id:'0',sub_id:configEditValue('cSubGroup')||undefined,limit_value:Number(configEditValue('cLimit'))||0,limit_unit:configEditValue('cUnit')||'GB',expires_days:Number(configEditValue('cDays'))||0,ip_limit:Number(configEditValue('cIp'))||0,speed_limit_value:Number(configEditValue('cSpeed'))||0,speed_limit_unit:'MBIT',all_protocols:!!document.getElementById('cAllProtocols')?.checked,port:ports[0],fingerprint:advanced.fingerprint.value,alpn:advanced.tls.alpn,advanced};
+  return {label:configEditValue('cName').trim()||undefined,protocol:configEditValue('cProto')||undefined,bundle_protocols:bundle,ad_block_enabled:!!document.getElementById('cAdBlockEnabled')?.checked,category_id:'0',sub_id:configEditValue('cSubGroup')||undefined,limit_value:Number(configEditValue('cLimit'))||0,limit_unit:configEditValue('cUnit')||'GB',expires_days:Number(configEditValue('cDays'))||0,ip_limit:Number(configEditValue('cIp'))||0,speed_limit_value:Number(configEditValue('cSpeed'))||0,speed_limit_unit:'MBIT',all_protocols:false,port:ports[0],fingerprint:advanced.fingerprint.value,alpn:advanced.tls.alpn,advanced};
 }
 async function saveEditedConfig(){
   const uid=__configEditUid;if(!uid)return false;
@@ -13798,7 +13775,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')toggleNotifications(
 function renderNotifications(){const list=document.getElementById('notifyList'),badge=document.getElementById('notifyBadge');if(!list||!badge)return;if(!__updateInfo||!__updateInfo.update_available){badge.textContent='0';badge.classList.remove('show');list.innerHTML=`<div class="notify-empty">${updateText('اعلان جدیدی وجود ندارد.','No new notifications.')}</div>`;return;}badge.textContent='1';badge.classList.add('show');const r=__updateInfo;const changes=Array.isArray(r.changelog)&&r.changelog.length?`<div class="notify-item-text" style="margin-top:5px">${r.changelog.slice(0,4).map(x=>`• ${esc(String(x))}`).join('<br>')}</div>`:'';list.innerHTML=`<div class="notify-item"><div class="notify-item-title">🔄 ${esc(r.title||updateText('بروزرسانی جدید پنل','New panel update'))}</div><div class="notify-item-text">${esc(r.message||updateText('نسخه جدید پنل منتشر شده است.','A new panel version is available.'))}</div>${changes}<div class="notify-item-meta">${updateText('نسخه فعلی','Current version')}: ${esc(r.current_version||'—')} → ${esc(r.latest_version||'—')}</div><button type="button" class="notify-update-btn" onclick="toggleNotifications(false);panelUpdate()">${updateText('مشاهده و بروزرسانی','View update')}</button></div>`}
 async function checkPanelUpdateWithNotify(showToast=false){if(__updateCheckBusy)return __updateInfo;__updateCheckBusy=true;try{const r=await api('/api/update/check');if(r&&r.ok){const old=__updateInfo&&__updateInfo.latest_version;__updateInfo=r;setVersionLabels(r.current_version||'1.0.1',r.latest_version||r.current_version);renderNotifications();if(r.update_available&&old!==r.latest_version)showUpdatePrompt(r);if(r.update_available&&showToast&&old!==r.latest_version)toast(updateText(`نسخه جدید ${r.latest_version} آماده است`,`Version ${r.latest_version} is available`));}return r}catch(e){return null}finally{__updateCheckBusy=false}}
 function showUpdatePrompt(r){const modal=document.getElementById('updatePromptModal');if(!modal||!r||!r.update_available)return;if(modal.parentElement!==document.body)document.body.appendChild(modal);const version=String(r.latest_version||'');if(!version)return;let seen='';let snooze=0;try{seen=localStorage.getItem('onex_update_prompt_seen')||'';snooze=Number(localStorage.getItem('onex_update_prompt_snooze')||0)}catch(e){}if(seen===version&&Date.now()<snooze)return;const title=document.getElementById('updatePromptTitle'),text=document.getElementById('updatePromptText'),ver=document.getElementById('updatePromptVersion'),yes=document.getElementById('updatePromptConfirm'),later=document.getElementById('updatePromptLater');if(title)title.textContent=r.title||updateText('بروزرسانی جدید در دسترس است','New update is available');if(text)text.textContent=r.message||updateText('نسخه جدید پنل آماده است. آیا می‌خواهید پنل را بروزرسانی کنید؟','A new panel version is available. Would you like to update the panel?');if(ver)ver.textContent=updateText(`نسخه فعلی: ${r.current_version||'—'}  →  نسخه جدید: ${version}`,`Current: ${r.current_version||'—'}  →  New: ${version}`);modal.classList.add('open');modal.setAttribute('aria-hidden','false');const close=()=>{modal.classList.remove('open');modal.setAttribute('aria-hidden','true');try{localStorage.setItem('onex_update_prompt_seen',version);localStorage.setItem('onex_update_prompt_snooze',String(Date.now()+6*3600*1000))}catch(e){}};if(later)later.onclick=close;if(yes)yes.onclick=()=>{try{localStorage.setItem('onex_update_prompt_seen',version)}catch(e){}modal.classList.remove('open');modal.setAttribute('aria-hidden','true');deployPanelUpdate();}}
-function startUpdateNotificationPolling(){if(__updatePollTimer)clearInterval(__updatePollTimer);checkPanelUpdateWithNotify(false);__updatePollTimer=setInterval(()=>checkPanelUpdateWithNotify(false),45000)}
+function startUpdateNotificationPolling(){if(__updatePollTimer)clearInterval(__updatePollTimer);checkPanelUpdateWithNotify(false);__updatePollTimer=setInterval(()=>checkPanelUpdateWithNotify(false),1800000)}
 async function checkPanelUpdate(showToast=true){
   if(__updateCheckBusy)return __updateInfo;
   __updateCheckBusy=true;
@@ -14273,7 +14250,7 @@ async function loadGroupDetail(id){
 function renderGroupDetail(g,links){
   const pane=document.getElementById('groupDetailPane'); if(!pane)return;
   if(!g){pane.innerHTML='<div class="group-detail-empty"><div class="group-detail-empty-icon">◉</div><b>یک گروه را انتخاب کنید</b><span>برای مشاهده لینک اشتراک، پروتکل‌ها و کانفیگ‌های گروه</span></div>';return}
-  const protocols=(window.__protocolList&&window.__protocolList.length?window.__protocolList.map(x=>x.id):['vless-ws','xhttp-packet-up','xhttp-stream-up','xhttp-stream-one','trojan-ws','trojan','shadowsocks','socks5','http','hysteria2','vless-grpc-reality','wireguard']);
+  const protocols=(window.__protocolList&&window.__protocolList.length?window.__protocolList.map(x=>x.id):['vless-ws','siderail-vless-xhttp','xhttp-packet-up','xhttp-stream-up','vmess-ws','trojan-ws','vless-httpupgrade','xhttp-stream-one']);
   const current=new Set(__groupProtocols.length?__groupProtocols:protocols);
   const memberIds=new Set((g.link_ids||[]).map(String));
   const allLinks=Array.isArray(links)?links:[];
@@ -14458,7 +14435,6 @@ async function restoreBot(){
 const RAILWAY_SUB_PROTOCOLS=['vless-ws','siderail-vless-xhttp','xhttp-packet-up','xhttp-stream-up','vmess-ws','trojan-ws','vless-httpupgrade','xhttp-stream-one'];
 const PROTOCOL_PICKER_GROUPS=[
   {title:'ONEX VIP',subtitle:'۶ پروتکل اصلی ONEX',ids:['vless-ws','siderail-vless-xhttp','xhttp-packet-up','xhttp-stream-up','vmess-ws','trojan-ws','vless-httpupgrade','xhttp-stream-one'],kind:'vip'},
-  {title:'ONEX VPS',subtitle:'پروتکل‌های VPS متقدم',ids:['trojan','shadowsocks','socks5','http','hysteria2','vless-reality','vless-grpc-reality','vmess','tuic','anytls','naive','shadowtls','snell','hysteria'],kind:'vps'}
 ];
 const PROTOCOL_PICKER_NAMES={"vless-ws":"ONEX Base","siderail-vless-xhttp":"ONEX XHTTP","vmess-ws":"ONEX VMess","trojan-ws":"ONEX Trojan","vless-httpupgrade":"ONEX HTTPUpgrade","xhttp-packet-up":"ONEX Xhttp","xhttp-stream-up":"ONEX Gaming","xhttp-stream-one":"ONEX Stream","trojan":"Trojan","shadowsocks":"Shadowsocks","socks5":"SOCKS5","http":"HTTP Proxy","hysteria2":"Hysteria2","vless-reality":"VLESS Reality","vless-grpc-reality":"VLESS gRPC Reality","vmess":"VMess","tuic":"TUIC","anytls":"AnyTLS","naive":"NaiveProxy","shadowtls":"ShadowTLS","snell":"Snell","hysteria":"Hysteria"};
 const PROTOCOL_PICKER_DESCS={"vless-ws":"VLESS WebSocket","siderail-vless-xhttp":"VLESS XHTTP","vmess-ws":"VMess WebSocket","trojan-ws":"Trojan WebSocket","vless-httpupgrade":"VLESS HTTPUpgrade","xhttp-packet-up":"VLESS + XHTTP","xhttp-stream-up":"VLESS + XHTTP","xhttp-stream-one":"VLESS + XHTTP stream-one","trojan":"Trojan + TLS","shadowsocks":"Shadowsocks","socks5":"SOCKS5","http":"HTTP Proxy","hysteria2":"Hysteria2 + QUIC","vless-reality":"VLESS + Reality","vless-grpc-reality":"VLESS + gRPC + Reality","vmess":"VMess + TLS","tuic":"TUIC + QUIC","anytls":"AnyTLS + TLS","naive":"NaiveProxy + TLS","shadowtls":"ShadowTLS v3","snell":"Snell v5","hysteria":"Hysteria + QUIC"};
@@ -15134,7 +15110,7 @@ html.light #panelLogoutBtn{background:rgba(220,38,38,.08)!important;border-color
 html.light #panelLogoutBtn span,html.light #panelLogoutBtn svg{color:#dc2626!important}
 html.light .all-proto-toggle i{background:#cbd5e1!important}
 html.light .all-proto-toggle input:checked+i{background:linear-gradient(135deg,var(--accent),var(--purple))!important}
-</style>
+<style id="onex-vip-only-final">#cfgx .all-proto-toggle.cfgx-all-toggle{display:none!important}</style>
 <style id="onex-neural-sidebar-final">
 /* Approved 3D neural sidebar: premium depth, restrained glow, clear active state. */
 :root{--neural-cyan:#27d7ff;--neural-violet:#8b5cf6;--neural-pink:#e445c4}
